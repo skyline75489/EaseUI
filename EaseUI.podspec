@@ -9,5 +9,5 @@ Pod::Spec.new do |s|
   s.source = { :git => "https://git.coding.net/skyline75489/EaseUI.git", :branch => 'master' }
   s.resource = 'resources/EaseUIResource.bundle'
   s.xcconfig     = {'OTHER_LDFLAGS' => '-ObjC'}
-  s.source_files = "EMUIKit/**/*.{h,m}"
+  s.source_files = "EMUIKit/**/*.{h,m,mm}"
 end
