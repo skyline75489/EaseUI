@@ -7,7 +7,10 @@ Pod::Spec.new do |s|
   s.platform     = :ios, '6.0'
   s.authors = { "Chester Liu" => "skyline75489@outlook.com" }
   s.source = { :git => "https://git.coding.net/skyline75489/EaseUI.git", :branch => 'master' }
-  s.resource = 'resources/EaseUIResource.bundle'
+  s.resources = ['resources/EaseUIResource.bundle', 'EMUIKit/3rdparty/MWPhotoBrowser/MWPhotoBrowser.bundle',
+                'EMUIKit/3rdparty/MJRefresh/MJRefresh.bundle']
+  s.vendored_libraries = ['EMUIKit/3rdparty/DeviceHelper/VoiceConvert/opencore-amrnb/libopencore-amrnb.a',
+                          'EMUIKit/3rdparty/DeviceHelper/VoiceConvert/opencore-amrwb/libopencore-amrwb.a']
   s.xcconfig     = {'OTHER_LDFLAGS' => '-ObjC'}
   s.source_files = "EMUIKit/**/*.{h,m,mm}"
 end
