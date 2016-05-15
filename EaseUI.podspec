@@ -6,5 +6,6 @@ Pod::Spec.new do |s|
   s.homepage = "https://coding.net/u/skyline75489/p/EaseUI/git"
   s.authors = { "Chester Liu" => "skyline75489@outlook.com" }
   s.source = { :git => "https://git.coding.net/skyline75489/EaseUI.git", :branch => 'master' }
+  s.resource = 'resources/EaseUIResource.bundle'
   s.source_files = "EMUIKit/**/*.{h,m}"
 end
