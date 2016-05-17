@@ -2,322 +2,323 @@
  *  * Hyphenate CONFIDENTIAL
  * __________________
  * Copyright (C) 2016 Hyphenate Inc. All rights reserved.
- *
- * NOTICE: All information contained herein is, and remains
- * the property of Hyphenate Inc.
- * Dissemination of this information or reproduction of this material
- * is strictly forbidden unless prior written permission is obtained
- * from Hyphenate Inc.
- */
+     *
+     * NOTICE: All information contained herein is, and remains
+     * the property of Hyphenate Inc.
+     * Dissemination of this information or reproduction of this material
+     * is strictly forbidden unless prior written permission is obtained
+     * from Hyphenate Inc.
+     */
 
-#import "EaseMessageViewController.h"
+    #import "EaseMessageViewController.h"
 
-#import <Foundation/Foundation.h>
-#import <Photos/Photos.h>
-#import <AssetsLibrary/AssetsLibrary.h>
+    #import <Foundation/Foundation.h>
+    #import <Photos/Photos.h>
+    #import <AssetsLibrary/AssetsLibrary.h>
 
-#import "NSDate+Category.h"
-#import "EaseUsersListViewController.h"
-#import "EaseMessageReadManager.h"
-#import "EaseEmotionManager.h"
-#import "EaseEmoji.h"
-#import "EaseEmotionEscape.h"
-#import "EaseCustomMessageCell.h"
-#import "UIImage+EMGIF.h"
-#import "EaseLocalDefine.h"
+    #import "NSDate+Category.h"
+    #import "EaseUsersListViewController.h"
+    #import "EaseMessageReadManager.h"
+    #import "EaseEmotionManager.h"
+    #import "EaseEmoji.h"
+    #import "EaseEmotionEscape.h"
+    #import "EaseCustomMessageCell.h"
+    #import "UIImage+EMGIF.h"
+    #import "EaseLocalDefine.h"
 
-#define KHintAdjustY    50
+    #define KHintAdjustY    50
 
-#define IOS_VERSION [[UIDevice currentDevice] systemVersion]>=9.0
+    #define IOS_VERSION [[UIDevice currentDevice] systemVersion]>=9.0
 
-@interface EaseMessageViewController ()<EaseMessageCellDelegate>
-{
-    UIMenuItem *_copyMenuItem;
-    UIMenuItem *_deleteMenuItem;
-    UILongPressGestureRecognizer *_lpgr;
-    
-    dispatch_queue_t _messageQueue;
-}
-
-@property (strong, nonatomic) id<IMessageModel> playingVoiceModel;
-@property (nonatomic) BOOL isKicked;
-@property (nonatomic) BOOL isPlayingAudio;
-
-@end
-
-@implementation EaseMessageViewController
-
-@synthesize conversation = _conversation;
-@synthesize deleteConversationIfNull = _deleteConversationIfNull;
-@synthesize messageCountOfPage = _messageCountOfPage;
-@synthesize timeCellHeight = _timeCellHeight;
-@synthesize messageTimeIntervalTag = _messageTimeIntervalTag;
-
-- (instancetype)initWithConversationChatter:(NSString *)conversationChatter
-                           conversationType:(EMConversationType)conversationType
-{
-    if ([conversationChatter length] == 0) {
-        return nil;
-    }
-    
-    self = [super initWithStyle:UITableViewStylePlain];
-    if (self) {
-        _conversation = [[EMClient sharedClient].chatManager getConversation:conversationChatter type:conversationType createIfNotExist:YES];
-        
-        _messageCountOfPage = 10;
-        _timeCellHeight = 30;
-        _deleteConversationIfNull = YES;
-        _scrollToBottomWhenAppear = YES;
-        _messsagesSource = [NSMutableArray array];
-        
-        [_conversation markAllMessagesAsRead];
-    }
-    
-    return self;
-}
-
-- (void)viewDidLoad {
-    [super viewDidLoad];
-    // Do any additional setup after loading the view.
-    self.view.backgroundColor = [UIColor colorWithRed:248 / 255.0 green:248 / 255.0 blue:248 / 255.0 alpha:1.0];
-    self.tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
-    
-    //初始化页面
-    CGFloat chatbarHeight = [EaseChatToolbar defaultHeight];
-    EMChatToolbarType barType = self.conversation.type == EMConversationTypeChat ? EMChatToolbarTypeChat : EMChatToolbarTypeGroup;
-    self.chatToolbar = [[EaseChatToolbar alloc] initWithFrame:CGRectMake(0, self.view.frame.size.height - chatbarHeight, self.view.frame.size.width, chatbarHeight) type:barType];
-    self.chatToolbar.autoresizingMask = UIViewAutoresizingFlexibleTopMargin;    
-    
-    //初始化手势
-    UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(keyBoardHidden:)];
-    [self.view addGestureRecognizer:tap];
-    
-    _lpgr = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(handleLongPress:)];
-    _lpgr.minimumPressDuration = 0.5;
-    [self.tableView addGestureRecognizer:_lpgr];
-    
-    _messageQueue = dispatch_queue_create("easemob.com", NULL);
-    
-    //注册代理
-    [EMCDDeviceManager sharedInstance].delegate = self;
-    [[EMClient sharedClient].chatManager addDelegate:self delegateQueue:nil];
-    [[EMClient sharedClient].roomManager addDelegate:self delegateQueue:nil];
-
-    if (self.conversation.type == EMConversationTypeChatRoom)
+    @interface EaseMessageViewController ()<EaseMessageCellDelegate>
     {
-        [self joinChatroom:self.conversation.conversationId];
+	UIMenuItem *_copyMenuItem;
+	UIMenuItem *_deleteMenuItem;
+	UILongPressGestureRecognizer *_lpgr;
+	
+	dispatch_queue_t _messageQueue;
     }
-    
-    [[NSNotificationCenter defaultCenter] addObserver:self
-                                             selector:@selector(didBecomeActive)
-                                                 name:UIApplicationDidBecomeActiveNotification
-                                               object:nil];
-    
-    [[EaseBaseMessageCell appearance] setSendBubbleBackgroundImage:[[UIImage imageNamed:@"EaseUIResource.bundle/chat_sender_bg"] stretchableImageWithLeftCapWidth:5 topCapHeight:35]];
-    [[EaseBaseMessageCell appearance] setRecvBubbleBackgroundImage:[[UIImage imageNamed:@"EaseUIResource.bundle/chat_receiver_bg"] stretchableImageWithLeftCapWidth:35 topCapHeight:35]];
-    
-    [[EaseBaseMessageCell appearance] setSendMessageVoiceAnimationImages:@[[UIImage imageNamed:@"EaseUIResource.bundle/chat_sender_audio_playing_full"], [UIImage imageNamed:@"EaseUIResource.bundle/chat_sender_audio_playing_000"], [UIImage imageNamed:@"EaseUIResource.bundle/chat_sender_audio_playing_001"], [UIImage imageNamed:@"EaseUIResource.bundle/chat_sender_audio_playing_002"], [UIImage imageNamed:@"EaseUIResource.bundle/chat_sender_audio_playing_003"]]];
-    [[EaseBaseMessageCell appearance] setRecvMessageVoiceAnimationImages:@[[UIImage imageNamed:@"EaseUIResource.bundle/chat_receiver_audio_playing_full"],[UIImage imageNamed:@"EaseUIResource.bundle/chat_receiver_audio_playing000"], [UIImage imageNamed:@"EaseUIResource.bundle/chat_receiver_audio_playing001"], [UIImage imageNamed:@"EaseUIResource.bundle/chat_receiver_audio_playing002"], [UIImage imageNamed:@"EaseUIResource.bundle/chat_receiver_audio_playing003"]]];
-    
-    [[EaseBaseMessageCell appearance] setAvatarSize:40.f];
-    [[EaseBaseMessageCell appearance] setAvatarCornerRadius:20.f];
-    
-    [[EaseChatBarMoreView appearance] setMoreViewBackgroundColor:[UIColor colorWithRed:240 / 255.0 green:242 / 255.0 blue:247 / 255.0 alpha:1.0]];
-    
-    [self tableViewDidTriggerHeaderRefresh];
-}
 
-- (void)setupEmotion
-{
-    if ([self.dataSource respondsToSelector:@selector(emotionFormessageViewController:)]) {
-        NSArray* emotionManagers = [self.dataSource emotionFormessageViewController:self];
-        [self.faceView setEmotionManagers:emotionManagers];
-    } else {
-        NSMutableArray *emotions = [NSMutableArray array];
-        for (NSString *name in [EaseEmoji allEmoji]) {
-            EaseEmotion *emotion = [[EaseEmotion alloc] initWithName:@"" emotionId:name emotionThumbnail:name emotionOriginal:name emotionOriginalURL:@"" emotionType:EMEmotionDefault];
-            [emotions addObject:emotion];
-        }
-        EaseEmotion *emotion = [emotions objectAtIndex:0];
-        EaseEmotionManager *manager= [[EaseEmotionManager alloc] initWithType:EMEmotionDefault emotionRow:3 emotionCol:7 emotions:emotions tagImage:[UIImage imageNamed:emotion.emotionId]];
-        [self.faceView setEmotionManagers:@[manager]];
-    }
-}
+    @property (strong, nonatomic) id<IMessageModel> playingVoiceModel;
+    @property (nonatomic) BOOL isKicked;
+    @property (nonatomic) BOOL isPlayingAudio;
 
-- (void)didReceiveMemoryWarning {
-    [super didReceiveMemoryWarning];
-    // Dispose of any resources that can be recreated.
-}
+    @end
 
-- (void)dealloc
-{
-    [[NSNotificationCenter defaultCenter] removeObserver:self];
-    
-    [[EMCDDeviceManager sharedInstance] stopPlaying];
-    [EMCDDeviceManager sharedInstance].delegate = nil;
-    
-    if (_imagePicker){
-        [_imagePicker dismissViewControllerAnimated:NO completion:nil];
-        _imagePicker = nil;
-    }
-}
+    @implementation EaseMessageViewController
 
-- (void)viewWillAppear:(BOOL)animated
-{
-    [super viewWillAppear:animated];
-    
-    self.isViewDidAppear = YES;
-    [[EaseSDKHelper shareHelper] setIsShowingimagePicker:NO];
-    
-    if (self.scrollToBottomWhenAppear) {
-        [self _scrollViewToBottom:NO];
-    }
-    self.scrollToBottomWhenAppear = YES;
-}
+    @synthesize conversation = _conversation;
+    @synthesize deleteConversationIfNull = _deleteConversationIfNull;
+    @synthesize messageCountOfPage = _messageCountOfPage;
+    @synthesize timeCellHeight = _timeCellHeight;
+    @synthesize messageTimeIntervalTag = _messageTimeIntervalTag;
 
-- (void)viewWillDisappear:(BOOL)animated
-{
-    [super viewWillDisappear:animated];
-    
-    self.isViewDidAppear = NO;
-    [[EMCDDeviceManager sharedInstance] disableProximitySensor];
-}
-
-#pragma mark - chatroom
-
-- (void)saveChatroom:(EMChatroom *)chatroom
-{
-    NSString *chatroomName = chatroom.subject ? chatroom.subject : @"";
-    NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
-    NSString *key = [NSString stringWithFormat:@"OnceJoinedChatrooms_%@", [[EMClient sharedClient] currentUsername]];
-    NSMutableDictionary *chatRooms = [NSMutableDictionary dictionaryWithDictionary:[ud objectForKey:key]];
-    if (![chatRooms objectForKey:chatroom.chatroomId])
+    - (instancetype)initWithConversationChatter:(NSString *)conversationChatter
+			       conversationType:(EMConversationType)conversationType
     {
-        [chatRooms setObject:chatroomName forKey:chatroom.chatroomId];
-        [ud setObject:chatRooms forKey:key];
-        [ud synchronize];
+	if ([conversationChatter length] == 0) {
+	    return nil;
+	}
+	
+	self = [super initWithStyle:UITableViewStylePlain];
+	if (self) {
+	    _conversation = [[EMClient sharedClient].chatManager getConversation:conversationChatter type:conversationType createIfNotExist:YES];
+	    
+	    _messageCountOfPage = 10;
+	    _timeCellHeight = 30;
+	    _deleteConversationIfNull = YES;
+	    _scrollToBottomWhenAppear = YES;
+	    _messsagesSource = [NSMutableArray array];
+	    
+	    [_conversation markAllMessagesAsRead];
+	}
+	
+	return self;
     }
-}
 
-- (void)joinChatroom:(NSString *)chatroomId
-{
-    __weak typeof(self) weakSelf = self;
-    [self showHudInView:self.view hint:NSLocalizedString(@"chatroom.joining",@"Joining the chatroom")];
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        EMError *error = nil;
-        EMChatroom *chatroom = [[EMClient sharedClient].roomManager joinChatroom:chatroomId error:&error];
-        dispatch_async(dispatch_get_main_queue(), ^{
-            if (weakSelf) {
-                EaseMessageViewController *strongSelf = weakSelf;
-                [strongSelf hideHud];
-                if (error != nil) {
-                    [strongSelf showHint:[NSString stringWithFormat:NSLocalizedString(@"chatroom.joinFailed",@"join chatroom \'%@\' failed"), chatroomId]];
-                } else {
-                    [strongSelf saveChatroom:chatroom];
-                }
-            }  else {
-                if (!error || (error.code == EMErrorChatroomAlreadyJoined)) {
-                    EMError *leaveError;
-                    [[EMClient sharedClient].roomManager leaveChatroom:chatroomId error:&leaveError];
-                    if (leaveError == nil) {
-                        [[EMClient sharedClient].chatManager deleteConversation:chatroomId deleteMessages:YES];
-                    }
-                }
-            }
-        });
-    });
-}
+    - (void)viewDidLoad {
+	[super viewDidLoad];
+	// Do any additional setup after loading the view.
+	self.view.backgroundColor = [UIColor colorWithRed:248 / 255.0 green:248 / 255.0 blue:248 / 255.0 alpha:1.0];
+	self.tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
+	
+	//初始化页面
+	CGFloat chatbarHeight = [EaseChatToolbar defaultHeight];
+	EMChatToolbarType barType = self.conversation.type == EMConversationTypeChat ? EMChatToolbarTypeChat : EMChatToolbarTypeGroup;
+	self.chatToolbar = [[EaseChatToolbar alloc] initWithFrame:CGRectMake(0, self.view.frame.size.height - chatbarHeight, self.view.frame.size.width, chatbarHeight) type:barType];
+	self.chatToolbar.autoresizingMask = UIViewAutoresizingFlexibleTopMargin;    
+	
+        [self setupEmotion];
 
-#pragma mark - EMChatManagerChatroomDelegate
+	//初始化手势
+	UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(keyBoardHidden:)];
+	[self.view addGestureRecognizer:tap];
+	
+	_lpgr = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(handleLongPress:)];
+	_lpgr.minimumPressDuration = 0.5;
+	[self.tableView addGestureRecognizer:_lpgr];
+	
+	_messageQueue = dispatch_queue_create("easemob.com", NULL);
+	
+	//注册代理
+	[EMCDDeviceManager sharedInstance].delegate = self;
+	[[EMClient sharedClient].chatManager addDelegate:self delegateQueue:nil];
+	[[EMClient sharedClient].roomManager addDelegate:self delegateQueue:nil];
 
-- (void)didReceiveUserJoinedChatroom:(EMChatroom *)aChatroom
-                            username:(NSString *)aUsername
-{
-    CGRect frame = self.chatToolbar.frame;
-    [self showHint:[NSString stringWithFormat:NSEaseLocalizedString(@"chatroom.join", @"\'%@\'join chatroom\'%@\'"), aUsername, aChatroom.chatroomId] yOffset:-frame.size.height + KHintAdjustY];
-}
+	if (self.conversation.type == EMConversationTypeChatRoom)
+	{
+	    [self joinChatroom:self.conversation.conversationId];
+	}
+	
+	[[NSNotificationCenter defaultCenter] addObserver:self
+						 selector:@selector(didBecomeActive)
+						     name:UIApplicationDidBecomeActiveNotification
+						   object:nil];
+	
+	[[EaseBaseMessageCell appearance] setSendBubbleBackgroundImage:[[UIImage imageNamed:@"EaseUIResource.bundle/chat_sender_bg"] stretchableImageWithLeftCapWidth:5 topCapHeight:35]];
+	[[EaseBaseMessageCell appearance] setRecvBubbleBackgroundImage:[[UIImage imageNamed:@"EaseUIResource.bundle/chat_receiver_bg"] stretchableImageWithLeftCapWidth:35 topCapHeight:35]];
+	
+	[[EaseBaseMessageCell appearance] setSendMessageVoiceAnimationImages:@[[UIImage imageNamed:@"EaseUIResource.bundle/chat_sender_audio_playing_full"], [UIImage imageNamed:@"EaseUIResource.bundle/chat_sender_audio_playing_000"], [UIImage imageNamed:@"EaseUIResource.bundle/chat_sender_audio_playing_001"], [UIImage imageNamed:@"EaseUIResource.bundle/chat_sender_audio_playing_002"], [UIImage imageNamed:@"EaseUIResource.bundle/chat_sender_audio_playing_003"]]];
+	[[EaseBaseMessageCell appearance] setRecvMessageVoiceAnimationImages:@[[UIImage imageNamed:@"EaseUIResource.bundle/chat_receiver_audio_playing_full"],[UIImage imageNamed:@"EaseUIResource.bundle/chat_receiver_audio_playing000"], [UIImage imageNamed:@"EaseUIResource.bundle/chat_receiver_audio_playing001"], [UIImage imageNamed:@"EaseUIResource.bundle/chat_receiver_audio_playing002"], [UIImage imageNamed:@"EaseUIResource.bundle/chat_receiver_audio_playing003"]]];
+	
+	[[EaseBaseMessageCell appearance] setAvatarSize:40.f];
+	[[EaseBaseMessageCell appearance] setAvatarCornerRadius:20.f];
+	
+	[[EaseChatBarMoreView appearance] setMoreViewBackgroundColor:[UIColor colorWithRed:240 / 255.0 green:242 / 255.0 blue:247 / 255.0 alpha:1.0]];
+	
+	[self tableViewDidTriggerHeaderRefresh];
+    }
 
-- (void)didReceiveUserLeavedChatroom:(EMChatroom *)aChatroom
-                            username:(NSString *)aUsername
-{
-    CGRect frame = self.chatToolbar.frame;
-    [self showHint:[NSString stringWithFormat:NSEaseLocalizedString(@"chatroom.leave", @"\'%@\'leave chatroom\'%@\'"), aUsername, aChatroom.chatroomId] yOffset:-frame.size.height + KHintAdjustY];
-}
-
-- (void)didReceiveKickedFromChatroom:(EMChatroom *)aChatroom
-                              reason:(EMChatroomBeKickedReason)aReason
-{
-    if ([_conversation.conversationId isEqualToString:aChatroom.chatroomId])
+    - (void)setupEmotion
     {
-        _isKicked = YES;
-        CGRect frame = self.chatToolbar.frame;
-        [self showHint:[NSString stringWithFormat:NSEaseLocalizedString(@"chatroom.remove", @"be removed from chatroom\'%@\'"), aChatroom.chatroomId] yOffset:-frame.size.height + KHintAdjustY];
-        [self.navigationController popViewControllerAnimated:YES];
+	if ([self.dataSource respondsToSelector:@selector(emotionFormessageViewController:)]) {
+	    NSArray* emotionManagers = [self.dataSource emotionFormessageViewController:self];
+	    [self.faceView setEmotionManagers:emotionManagers];
+	} else {
+	    NSMutableArray *emotions = [NSMutableArray array];
+	    for (NSString *name in [EaseEmoji allEmoji]) {
+		EaseEmotion *emotion = [[EaseEmotion alloc] initWithName:@"" emotionId:name emotionThumbnail:name emotionOriginal:name emotionOriginalURL:@"" emotionType:EMEmotionDefault];
+		[emotions addObject:emotion];
+	    }
+	    EaseEmotion *emotion = [emotions objectAtIndex:0];
+	    EaseEmotionManager *manager= [[EaseEmotionManager alloc] initWithType:EMEmotionDefault emotionRow:3 emotionCol:7 emotions:emotions tagImage:[UIImage imageNamed:emotion.emotionId]];
+	    [self.faceView setEmotionManagers:@[manager]];
+	}
     }
-}
 
-#pragma mark - getter
-
-- (UIImagePickerController *)imagePicker
-{
-    if (_imagePicker == nil) {
-        _imagePicker = [[UIImagePickerController alloc] init];
-        _imagePicker.modalPresentationStyle= UIModalPresentationOverFullScreen;
-        _imagePicker.delegate = self;
+    - (void)didReceiveMemoryWarning {
+	[super didReceiveMemoryWarning];
+	// Dispose of any resources that can be recreated.
     }
-    
-    return _imagePicker;
-}
 
-#pragma mark - setter
-
-- (void)setIsViewDidAppear:(BOOL)isViewDidAppear
-{
-    _isViewDidAppear =isViewDidAppear;
-    if (_isViewDidAppear)
+    - (void)dealloc
     {
-        NSMutableArray *unreadMessages = [NSMutableArray array];
-        for (EMMessage *message in self.messsagesSource)
-        {
-            if ([self _shouldSendHasReadAckForMessage:message read:NO])
-            {
-                [unreadMessages addObject:message];
-            }
-        }
-        if ([unreadMessages count])
-        {
-            [self _sendHasReadResponseForMessages:unreadMessages isRead:YES];
-        }
-        
-        [_conversation markAllMessagesAsRead];
+	[[NSNotificationCenter defaultCenter] removeObserver:self];
+	
+	[[EMCDDeviceManager sharedInstance] stopPlaying];
+	[EMCDDeviceManager sharedInstance].delegate = nil;
+	
+	if (_imagePicker){
+	    [_imagePicker dismissViewControllerAnimated:NO completion:nil];
+	    _imagePicker = nil;
+	}
     }
-}
 
-- (void)setChatToolbar:(EaseChatToolbar *)chatToolbar
-{
-    [_chatToolbar removeFromSuperview];
-    
-    _chatToolbar = chatToolbar;
-    if (_chatToolbar) {
-        [self.view addSubview:_chatToolbar];
+    - (void)viewWillAppear:(BOOL)animated
+    {
+	[super viewWillAppear:animated];
+	
+	self.isViewDidAppear = YES;
+	[[EaseSDKHelper shareHelper] setIsShowingimagePicker:NO];
+	
+	if (self.scrollToBottomWhenAppear) {
+	    [self _scrollViewToBottom:NO];
+	}
+	self.scrollToBottomWhenAppear = YES;
     }
-    
-    CGRect tableFrame = self.tableView.frame;
-    tableFrame.size.height = self.view.frame.size.height - _chatToolbar.frame.size.height;
-    self.tableView.frame = tableFrame;
-    if ([chatToolbar isKindOfClass:[EaseChatToolbar class]]) {
-        [(EaseChatToolbar *)self.chatToolbar setDelegate:self];
-        self.chatBarMoreView = (EaseChatBarMoreView*)[(EaseChatToolbar *)self.chatToolbar moreView];
-        self.faceView = (EaseFaceView*)[(EaseChatToolbar *)self.chatToolbar faceView];
-        self.recordView = (EaseRecordView*)[(EaseChatToolbar *)self.chatToolbar recordView];
-    }
-}
 
-- (void)setDataSource:(id<EaseMessageViewControllerDataSource>)dataSource
-{
-    _dataSource = dataSource;
-    
-    [self setupEmotion];
+    - (void)viewWillDisappear:(BOOL)animated
+    {
+	[super viewWillDisappear:animated];
+	
+	self.isViewDidAppear = NO;
+	[[EMCDDeviceManager sharedInstance] disableProximitySensor];
+    }
+
+    #pragma mark - chatroom
+
+    - (void)saveChatroom:(EMChatroom *)chatroom
+    {
+	NSString *chatroomName = chatroom.subject ? chatroom.subject : @"";
+	NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+	NSString *key = [NSString stringWithFormat:@"OnceJoinedChatrooms_%@", [[EMClient sharedClient] currentUsername]];
+	NSMutableDictionary *chatRooms = [NSMutableDictionary dictionaryWithDictionary:[ud objectForKey:key]];
+	if (![chatRooms objectForKey:chatroom.chatroomId])
+	{
+	    [chatRooms setObject:chatroomName forKey:chatroom.chatroomId];
+	    [ud setObject:chatRooms forKey:key];
+	    [ud synchronize];
+	}
+    }
+
+    - (void)joinChatroom:(NSString *)chatroomId
+    {
+	__weak typeof(self) weakSelf = self;
+	[self showHudInView:self.view hint:NSLocalizedString(@"chatroom.joining",@"Joining the chatroom")];
+	dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+	    EMError *error = nil;
+	    EMChatroom *chatroom = [[EMClient sharedClient].roomManager joinChatroom:chatroomId error:&error];
+	    dispatch_async(dispatch_get_main_queue(), ^{
+		if (weakSelf) {
+		    EaseMessageViewController *strongSelf = weakSelf;
+		    [strongSelf hideHud];
+		    if (error != nil) {
+			[strongSelf showHint:[NSString stringWithFormat:NSLocalizedString(@"chatroom.joinFailed",@"join chatroom \'%@\' failed"), chatroomId]];
+		    } else {
+			[strongSelf saveChatroom:chatroom];
+		    }
+		}  else {
+		    if (!error || (error.code == EMErrorChatroomAlreadyJoined)) {
+			EMError *leaveError;
+			[[EMClient sharedClient].roomManager leaveChatroom:chatroomId error:&leaveError];
+			if (leaveError == nil) {
+			    [[EMClient sharedClient].chatManager deleteConversation:chatroomId deleteMessages:YES];
+			}
+		    }
+		}
+	    });
+	});
+    }
+
+    #pragma mark - EMChatManagerChatroomDelegate
+
+    - (void)didReceiveUserJoinedChatroom:(EMChatroom *)aChatroom
+				username:(NSString *)aUsername
+    {
+	CGRect frame = self.chatToolbar.frame;
+	[self showHint:[NSString stringWithFormat:NSEaseLocalizedString(@"chatroom.join", @"\'%@\'join chatroom\'%@\'"), aUsername, aChatroom.chatroomId] yOffset:-frame.size.height + KHintAdjustY];
+    }
+
+    - (void)didReceiveUserLeavedChatroom:(EMChatroom *)aChatroom
+				username:(NSString *)aUsername
+    {
+	CGRect frame = self.chatToolbar.frame;
+	[self showHint:[NSString stringWithFormat:NSEaseLocalizedString(@"chatroom.leave", @"\'%@\'leave chatroom\'%@\'"), aUsername, aChatroom.chatroomId] yOffset:-frame.size.height + KHintAdjustY];
+    }
+
+    - (void)didReceiveKickedFromChatroom:(EMChatroom *)aChatroom
+				  reason:(EMChatroomBeKickedReason)aReason
+    {
+	if ([_conversation.conversationId isEqualToString:aChatroom.chatroomId])
+	{
+	    _isKicked = YES;
+	    CGRect frame = self.chatToolbar.frame;
+	    [self showHint:[NSString stringWithFormat:NSEaseLocalizedString(@"chatroom.remove", @"be removed from chatroom\'%@\'"), aChatroom.chatroomId] yOffset:-frame.size.height + KHintAdjustY];
+	    [self.navigationController popViewControllerAnimated:YES];
+	}
+    }
+
+    #pragma mark - getter
+
+    - (UIImagePickerController *)imagePicker
+    {
+	if (_imagePicker == nil) {
+	    _imagePicker = [[UIImagePickerController alloc] init];
+	    _imagePicker.modalPresentationStyle= UIModalPresentationOverFullScreen;
+	    _imagePicker.delegate = self;
+	}
+	
+	return _imagePicker;
+    }
+
+    #pragma mark - setter
+
+    - (void)setIsViewDidAppear:(BOOL)isViewDidAppear
+    {
+	_isViewDidAppear =isViewDidAppear;
+	if (_isViewDidAppear)
+	{
+	    NSMutableArray *unreadMessages = [NSMutableArray array];
+	    for (EMMessage *message in self.messsagesSource)
+	    {
+		if ([self _shouldSendHasReadAckForMessage:message read:NO])
+		{
+		    [unreadMessages addObject:message];
+		}
+	    }
+	    if ([unreadMessages count])
+	    {
+		[self _sendHasReadResponseForMessages:unreadMessages isRead:YES];
+	    }
+	    
+	    [_conversation markAllMessagesAsRead];
+	}
+    }
+
+    - (void)setChatToolbar:(EaseChatToolbar *)chatToolbar
+    {
+	[_chatToolbar removeFromSuperview];
+	
+	_chatToolbar = chatToolbar;
+	if (_chatToolbar) {
+	    [self.view addSubview:_chatToolbar];
+	}
+	
+	CGRect tableFrame = self.tableView.frame;
+	tableFrame.size.height = self.view.frame.size.height - _chatToolbar.frame.size.height;
+	self.tableView.frame = tableFrame;
+	if ([chatToolbar isKindOfClass:[EaseChatToolbar class]]) {
+	    [(EaseChatToolbar *)self.chatToolbar setDelegate:self];
+	    self.chatBarMoreView = (EaseChatBarMoreView*)[(EaseChatToolbar *)self.chatToolbar moreView];
+	    self.faceView = (EaseFaceView*)[(EaseChatToolbar *)self.chatToolbar faceView];
+	    self.recordView = (EaseRecordView*)[(EaseChatToolbar *)self.chatToolbar recordView];
+	}
+    }
+
+    - (void)setDataSource:(id<EaseMessageViewControllerDataSource>)dataSource
+    {
+	_dataSource = dataSource;
+	
 }
 
 - (void)setDelegate:(id<EaseMessageViewControllerDelegate>)delegate
